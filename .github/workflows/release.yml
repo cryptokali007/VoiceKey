@@ -1,0 +1,62 @@
+name: Windows release
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['VERSION', '.github/workflows/release.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Windows x64 application
+        shell: cmd
+        run: build.cmd
+      - name: Check WAV output and transcribe a real speech clip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $fixture = Join-Path $env:RUNNER_TEMP 'voicekey-jfk.wav'
+          Invoke-WebRequest 'https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.9.2/samples/jfk.wav' -OutFile $fixture
+          $p = Start-Process ./dist/VoiceKey.exe -ArgumentList @('--self-test', ('"' + $fixture + '"')) -PassThru -Wait -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw "VoiceKey self-test failed with exit code $($p.ExitCode)" }
+      - name: Package public download
+        shell: pwsh
+        run: |
+          Copy-Item Install.cmd, README.md, LICENSE -Destination dist
+          Compress-Archive -Path dist/* -DestinationPath VoiceKey-Windows-x64.zip
+          $h=(Get-FileHash VoiceKey-Windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$h  VoiceKey-Windows-x64.zip" | Set-Content SHA256SUMS.txt -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
+            VoiceKey-Windows-x64.zip
+            SHA256SUMS.txt
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+      - name: Publish versioned Windows download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(cat VERSION)"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag="v$version"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "$tag is already published."
+            exit 0
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --title "VoiceKey $version for Windows" --notes 'Extract the ZIP and double-click Install.cmd, or run VoiceKey.exe directly. Record 48 kHz WAV vocals and dictate locally with six switchable Whisper models.' VoiceKey-Windows-x64.zip SHA256SUMS.txt
