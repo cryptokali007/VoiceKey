@@ -60,3 +60,18 @@ jobs:
             exit 0
           fi
           gh release create "$tag" --target "$GITHUB_SHA" --title "VoiceKey $version for Windows" --notes 'Extract the ZIP and double-click Install.cmd, or run VoiceKey.exe directly. Record 48 kHz WAV vocals and dictate locally with six switchable Whisper models.' VoiceKey-Windows-x64.zip SHA256SUMS.txt
+      - name: Verify account-free download
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$(cat VERSION)"
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$tag"
+          mkdir anonymous-download
+          cd anonymous-download
+          for asset in VoiceKey-Windows-x64.zip SHA256SUMS.txt; do
+            curl --disable --fail --silent --show-error --location --retry 4 --retry-all-errors "$base/$asset" --output "$asset"
+          done
+          sha256sum --check SHA256SUMS.txt
+          unzip -t VoiceKey-Windows-x64.zip
+          unzip -Z1 VoiceKey-Windows-x64.zip | grep -Fx 'VoiceKey.exe'
+          unzip -Z1 VoiceKey-Windows-x64.zip | grep -Fx 'Install.cmd'
