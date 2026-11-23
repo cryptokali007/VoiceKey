@@ -1,0 +1,28 @@
+name: Check the published Windows release
+on:
+  push:
+    branches: ['qa/verify-windows-v1.0.0']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-release:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the public ZIP, launch the app and transcribe speech
+        run: ./.github/qa/verify.ps1
+        shell: pwsh
+      - name: Verify clipboard insertion and focus guard in native Windows controls
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/cryptokali007/VoiceKey/releases/download/v1.0.0/VoiceKey-Windows-x64.zip'
+          $zip = Join-Path $env:RUNNER_TEMP 'VoiceKey.zip'
+          Invoke-WebRequest $url -OutFile $zip
+          if ((Get-FileHash $zip -Algorithm SHA256).Hash -ine '59362ea10ee623de8e477ba402d55094cffb645531c6a3e60a71944ba6cb6ed9') { throw 'Published binary hash mismatch' }
+          $dir = Join-Path $env:RUNNER_TEMP 'VoiceKey-paste-check'
+          Expand-Archive $zip $dir
+          $exe = Join-Path $dir 'VoiceKey.exe'
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -STA -NoProfile -ExecutionPolicy Bypass -File ./.github/qa/Test-Paste.ps1 $exe
+          exit $LASTEXITCODE
