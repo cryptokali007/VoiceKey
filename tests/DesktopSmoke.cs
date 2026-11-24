@@ -182,10 +182,11 @@ namespace VoiceKey {
                         firstText.Clear();
                         ActivateTarget(first,firstText);
                         PressKeyDown((int)Keys.OemSemicolon);
-                        Pump(350);
-                        if(shortcutPressCount!=1 || shortcutTarget.Window!=first.Handle || shortcutTarget.Focus!=firstText.Handle)
-                            throw new InvalidOperationException("Holding semicolon did not start dictation with the focused editor as target.");
-                        PressKeyUp((int)Keys.OemSemicolon);
+                        try {
+                            Pump(350);
+                            if(shortcutPressCount!=1 || shortcutTarget.Window!=first.Handle || shortcutTarget.Focus!=firstText.Handle)
+                                throw new InvalidOperationException("Holding semicolon did not start dictation with the focused editor as target.");
+                        } finally { PressKeyUp((int)Keys.OemSemicolon); }
                         Pump(100);
                         if(shortcutReleaseCount!=1 || firstText.Text.Length!=0)
                             throw new InvalidOperationException("A semicolon hold did not release once without inserting punctuation.");
@@ -207,12 +208,15 @@ namespace VoiceKey {
                     firstText.Clear(); secondText.Clear();
                     ActivateTarget(first,firstText);
                     MoveToButton(dictation.HoldButton);
-                    ClickDown(); Pump(100);
-                    if(pressCount!=1 || !eligible) throw new InvalidOperationException("The second press did not capture editor A as its paste target.");
-                    ActivateTarget(second,secondText);
-                    Pump(120);
-                    Clipboard.SetText(expected,TextDataFormat.UnicodeText);
-                    ClickUp(); Pump(180);
+                    ClickDown();
+                    try {
+                        Pump(100);
+                        if(pressCount!=1 || !eligible) throw new InvalidOperationException("The second press did not capture editor A as its paste target.");
+                        ActivateTarget(second,secondText);
+                        Pump(120);
+                        Clipboard.SetText(expected,TextDataFormat.UnicodeText);
+                    } finally { ClickUp(); }
+                    Pump(180);
                     if(releaseCount!=1) throw new InvalidOperationException("The switched-window hold did not receive a release.");
                     if(pasteSent || firstText.Text.Length!=0 || secondText.Text.Length!=0)
                         throw new InvalidOperationException("The transcript pasted after focus switched to another window.");
@@ -233,9 +237,12 @@ namespace VoiceKey {
         }
         static void PressAndRelease(Control button,int holdMilliseconds) {
             MoveToButton(button);
-            ClickDown(); Pump(holdMilliseconds);
-            Clipboard.SetText("VoiceKey smoke π 漢字",TextDataFormat.UnicodeText);
-            ClickUp(); Pump(180);
+            ClickDown();
+            try {
+                Pump(holdMilliseconds);
+                Clipboard.SetText("VoiceKey smoke π 漢字",TextDataFormat.UnicodeText);
+            } finally { ClickUp(); }
+            Pump(180);
         }
         static void MoveToButton(Control button) {
             Rect rect;
@@ -251,7 +258,10 @@ namespace VoiceKey {
                 throw new InvalidOperationException("The US keyboard layout could not be selected for the isolated smoke test.");
         }
         static void PressAndReleaseKey(int key,int holdMilliseconds) {
-            PressKeyDown(key); Pump(holdMilliseconds); PressKeyUp(key); Pump(180);
+            PressKeyDown(key);
+            try { Pump(holdMilliseconds); }
+            finally { PressKeyUp(key); }
+            Pump(180);
         }
         static void PressKeyDown(int key) {
             var input=new Input {Type=1,Keyboard=new KeyboardInput {VirtualKey=(ushort)key}};
