@@ -38,9 +38,10 @@ namespace VoiceKey {
         }
         [DllImport("user32.dll")] static extern uint SendInput(uint count,Input[] input,int size);
         internal static bool Down(int key) { return (GetAsyncKeyState(key)&0x8000)!=0; }
-        static Input Key(ushort key,bool up) { return new Input { type=1,keyboard=new Keyboard { key=key,flags=up?2u:0u } }; }
+        internal static bool PasteModifierDown() { return Down(0x10)||Down(0x11)||Down(0x12)||Down(0x5b)||Down(0x5c); }
+        static Input Key(ushort key,bool up) { return new Input { type=1,keyboard=new Keyboard { key=key,flags=up?2u:0u,extra=new UIntPtr(ShortcutController.InjectionMarker) } }; }
         internal static bool Paste(Target target) {
-            if(Down(0x10)||Down(0x11)||Down(0x12)||Down(0x5b)||Down(0x5c)||!target.Matches(CurrentTarget())) return false;
+            if(PasteModifierDown()||!target.Matches(CurrentTarget())) return false;
             var keys=new[]{Key(0x11,false),Key(0x56,false),Key(0x56,true),Key(0x11,true)};
             return SendInput(4,keys,Marshal.SizeOf(typeof(Input)))==4;
         }

@@ -19,10 +19,11 @@ VoiceKey writes the delivered PCM samples directly without compression, gain cha
 ## Dictate into another app
 
 1. Pick a Whisper model, choose your language and click **Download model**. The first download also installs the CPU runtime. Each downloaded model stays on this PC.
-2. Leave VoiceKey open or minimize it. Click the destination text box. Hold **F8**, speak, then release. The transcript goes to the clipboard. With **Paste into the active app** enabled, VoiceKey sends Ctrl+V if the original foreground window and native focus control still match.
-3. If you switch windows while Whisper works, paste the transcript yourself with **Ctrl+V**. For clipboard-only use, clear the paste checkbox. The on-screen **Hold to dictate** button always copies. The transcript is editable and **Copy text** copies your edits.
+2. Choose **Dictation widget** for a compact window that floats above your other apps. Click the field where you want the words to appear. Press and hold **Hold to dictate** with the mouse, speak, then let go. Once Whisper finishes, VoiceKey pastes into that field. You can also use the hold button in the full window.
+3. To use the keyboard, click the destination field and hold your dictation shortcut. A fresh install starts with **semicolon** on a US keyboard. Tap it briefly to type punctuation, or hold it until VoiceKey shows **Listening** and speak. In the full window, **Set shortcut** lets you press a different key or a combination such as **Ctrl+Shift+Space**. Select **Off** for mouse-only use. Keyboard dictation also works while VoiceKey is minimized. Upgrades retain the shortcut saved in 1.0.
+4. Click **Full app** to record or save a WAV, change your microphone or model, or edit and copy the transcript. VoiceKey remembers which view you used last. WAV recording controls are available in the full window.
 
-Choose F9 or F10 if F8 is already used, or choose Off for mouse-only operation. A ThinkPad’s function-key setting can require holding Fn as well. Ordinary edit fields support Ctrl+V. Some elevated apps and custom editors require manual paste. Within a browser, multiple page fields can share a native focus handle. Keep the caret in your intended field until transcription finishes.
+Leave **Paste into the active app** checked for automatic paste. If you change windows or native controls during dictation, VoiceKey keeps the transcript on the clipboard. Press **Ctrl+V** when you are ready. You can also clear the checkbox for clipboard-only use. Windows can block automatic paste into elevated apps, and different fields within a browser can share a native focus handle. Keep the caret in your intended field until the words appear.
 
 ## Pick a model
 

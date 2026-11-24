@@ -23,6 +23,15 @@ jobs:
           Invoke-WebRequest 'https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.9.2/samples/jfk.wav' -OutFile $fixture
           $p = Start-Process ./dist/VoiceKey.exe -ArgumentList @('--self-test', ('"' + $fixture + '"')) -PassThru -Wait -NoNewWindow
           if ($p.ExitCode -ne 0) { throw "VoiceKey self-test failed with exit code $($p.ExitCode)" }
+      - name: Test floating input and automatic paste on the Windows desktop
+        shell: pwsh
+        run: |
+          $compiler = Join-Path $env:WINDIR 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+          $smoke = Join-Path $env:RUNNER_TEMP 'VoiceKeyDesktopSmoke.exe'
+          & $compiler /nologo /target:exe /platform:x64 /codepage:65001 "/out:$smoke" /main:VoiceKey.DesktopSmoke /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Net.Http.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll 'src\*.cs' 'tests\DesktopSmoke.cs'
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop test did not compile.' }
+          & $smoke
+          if ($LASTEXITCODE -ne 0) { throw "Windows desktop input check returned $LASTEXITCODE." }
       - name: Package public download
         shell: pwsh
         run: |
@@ -37,6 +46,7 @@ jobs:
             VoiceKey-Windows-x64.zip
             SHA256SUMS.txt
   publish:
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -59,7 +69,7 @@ jobs:
             echo "$tag is already published."
             exit 0
           fi
-          gh release create "$tag" --target "$GITHUB_SHA" --title "VoiceKey $version for Windows" --notes 'Extract the ZIP and double-click Install.cmd, or run VoiceKey.exe directly. Record 48 kHz WAV vocals and dictate locally with six switchable Whisper models.' VoiceKey-Windows-x64.zip SHA256SUMS.txt
+          gh release create "$tag" --target "$GITHUB_SHA" --title "VoiceKey $version for Windows" --notes-file RELEASE_NOTES.md VoiceKey-Windows-x64.zip SHA256SUMS.txt
       - name: Verify account-free download
         shell: bash
         run: |

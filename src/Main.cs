@@ -9,9 +9,15 @@ using System.Windows.Forms;
 
 namespace VoiceKey {
     internal sealed class MainWindow : Form {
-        readonly ComboBox mic=List(), format=List(), model=List(), language=List(), hotkey=List();
+        readonly ComboBox mic=List(), format=List(), model=List(), language=List();
         readonly Button record=Button("Record WAV"), open=Button("Open folder"), listen=Button("Play last"),
-            get=Button("Download model"), talk=Button("Hold to dictate"), copy=Button("Copy text"), again=Button("Retry last dictation");
+            get=Button("Download model"), copy=Button("Copy text"), again=Button("Retry last dictation"),
+            setKey=Button("Set shortcut…"), widget=Button("Dictation widget"), full=Button("Full app");
+        readonly DictationButton talk=new DictationButton { Text="Hold to dictate",AutoSize=true,Padding=new Padding(8,3,8,3),UseVisualStyleBackColor=true };
+        readonly TableLayoutPanel root=new TableLayoutPanel(), compact=new TableLayoutPanel();
+        readonly FlowLayoutPanel dictationActions=Row(), widgetActions=Row();
+        readonly FlowLayoutPanel fullStatus=Row(), widgetStatus=Row();
+        readonly Label bindingName=Label("");
         readonly CheckBox paste=new CheckBox { Text="Paste into the active app", AutoSize=true, Checked=true };
         readonly TextBox transcript=new TextBox { Multiline=true,ScrollBars=ScrollBars.Vertical,Height=75,Dock=DockStyle.Fill,MaxLength=0,AcceptsReturn=true };
         readonly Label audioStatus=Label("Ready to record"), dictStatus=Label(""), keyHint=Label("");
@@ -23,8 +29,11 @@ namespace VoiceKey {
         readonly ToolTip tip=new ToolTip();
         Capture capture;
         CancellationTokenSource operation;
-        bool held, keyboard, loading=true, registered, downloading, closeRequested, eligible;
-        int vk=0x77;
+        bool held, keyboard, loading=true, downloading, closeRequested, eligible, widgetMode;
+        Size fullSize;
+        bool fullMaximized;
+        ShortcutBinding binding=ShortcutBinding.Default;
+        ShortcutController shortcut;
         Desktop.Target target;
         string lastTake;
         readonly Stopwatch clock=new Stopwatch();
@@ -47,42 +56,85 @@ namespace VoiceKey {
         }
         internal MainWindow() {
             Text="VoiceKey"; Font=new Font("Segoe UI",9.5f); AutoScaleMode=AutoScaleMode.Dpi;
+            TopMost=true;
             AutoScroll=true; StartPosition=FormStartPosition.CenterScreen; ClientSize=new Size(570,630); MinimumSize=new Size(470,500);
-            var root=new TableLayoutPanel { Dock=DockStyle.Top,AutoSize=true,ColumnCount=1,RowCount=0,Padding=new Padding(16,3,16,12) };
+            root.Dock=DockStyle.Top; root.AutoSize=true; root.ColumnCount=1; root.Padding=new Padding(16,3,16,12);
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100)); Controls.Add(root);
+            compact.Dock=DockStyle.Top; compact.AutoSize=true; compact.ColumnCount=1; compact.Padding=new Padding(9,4,9,5);
+            compact.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100)); compact.Visible=false; Controls.Add(compact);
             foreach(var d in AudioNative.Devices()) mic.Items.Add(d); mic.SelectedIndex=0;
             format.Items.AddRange(new object[]{"Suno vocal  ·  48 kHz / 24-bit mono WAV","Standard vocal  ·  48 kHz / 16-bit mono WAV"}); format.SelectedIndex=0;
             model.Items.AddRange(Model.Choices); model.SelectedIndex=1;
             language.Items.AddRange(new object[]{"English","Español","Auto-detect"}); language.SelectedIndex=0;
-            hotkey.Items.AddRange(new object[]{"F8","F9","F10","Off"}); hotkey.SelectedIndex=0;
             Add(root,Heading("Voice recorder"));
             Add(root,Fields(new[]{"Microphone","WAV format"},mic,format));
             Add(root,Row(record,listen,open)); Add(root,meter); Add(root,audioStatus);
             Add(root,Heading("Push-to-talk"));
-            Add(root,Fields(new[]{"Whisper model","Language","Hold key"},model,language,hotkey));
-            Add(root,Row(get,talk)); Add(root,Row(paste)); Add(root,keyHint); Add(root,dictStatus);
+            Add(root,Fields(new[]{"Whisper model","Language","Hold key"},model,language,Row(bindingName,setKey)));
+            dictationActions.Controls.AddRange(new Control[]{get,talk,widget});
+            fullStatus.Controls.Add(dictStatus);
+            Add(root,dictationActions); Add(root,Row(paste)); Add(root,keyHint); Add(root,fullStatus);
             Add(root,transcript); Add(root,Row(copy,again));
-            tip.SetToolTip(talk,"Hold the mouse button, speak, then release to copy your words.");
+            widgetActions.Controls.Add(full); Add(compact,widgetActions); Add(compact,widgetStatus);
+            tip.SetToolTip(talk,"Click a text field first. Hold this button to speak, then release to transcribe and paste.");
             tip.SetToolTip(again,"Run the currently selected model on the most recent dictation.");
             tip.SetToolTip(meter,"Peak level from the microphone during capture.");
-            Directory.CreateDirectory(Whisper.Home); LoadSettings();
-            record.Click+=delegate { if(capture!=null && !held) FinishCapture(); else if(capture==null) StartCapture(false,false); };
+            Directory.CreateDirectory(Whisper.Home); LoadSettings(); bindingName.Text=binding.Display;
+            record.Click+=delegate { if(capture!=null && !held) FinishCapture(); else if(capture==null) StartCapture(false,false,new Desktop.Target()); };
             listen.Click+=delegate { if(File.Exists(lastTake)) Launch(lastTake); };
             open.Click+=delegate { try { Directory.CreateDirectory(takes); Launch(takes); } catch(Exception ex) { Error(ex.Message); } };
             get.Click+=async delegate { if(operation!=null) operation.Cancel(); else await Install(); };
-            talk.MouseDown+=delegate(object sender,MouseEventArgs e) { if(e.Button==MouseButtons.Left) StartCapture(true,false); };
-            talk.MouseUp+=delegate(object sender,MouseEventArgs e) { if(e.Button==MouseButtons.Left && held && !keyboard) FinishCapture(); };
+            talk.HoldStarted+=delegate { StartCapture(true,false,Desktop.CurrentTarget()); };
+            talk.HoldEnded+=delegate { if(held && !keyboard) FinishCapture(); };
+            widget.Click+=delegate { SetWidgetMode(true); SaveSettings(); };
+            full.Click+=delegate { SetWidgetMode(false); SaveSettings(); };
+            setKey.Click+=delegate { ChooseShortcut(); };
             tick.Tick+=delegate { Tick(); };
             copy.Click+=delegate { CopyText(); };
             again.Click+=async delegate { if(File.Exists(latest)) { eligible=false; await Decode(); } };
             model.SelectedIndexChanged+=delegate { if(!loading) { UpdateModel(); SaveSettings(); } };
-            hotkey.SelectedIndexChanged+=delegate { if(!loading) { SetHotkey(); SaveSettings(); } };
             mic.SelectedIndexChanged+=SettingsChanged; format.SelectedIndexChanged+=SettingsChanged; language.SelectedIndexChanged+=SettingsChanged;
             paste.CheckedChanged+=SettingsChanged; transcript.TextChanged+=delegate { copy.Enabled=!string.IsNullOrWhiteSpace(transcript.Text); };
             Shown+=delegate { loading=false; SetHotkey(); UpdateModel(); tick.Start(); };
             FormClosing+=ClosingWindow;
         }
         Model Selected { get { return (Model)model.SelectedItem; } }
+        internal void SetWidgetMode(bool compactMode) {
+            if(compactMode==widgetMode || capture!=null) return;
+            SuspendLayout();
+            float scale;
+            using(var graphics=CreateGraphics()) scale=graphics.DpiX/96f;
+            if(compactMode) {
+                fullMaximized=WindowState==FormWindowState.Maximized;
+                WindowState=FormWindowState.Normal;
+                fullSize=Size;
+                MinimumSize=Size.Empty;
+                widgetActions.Controls.Add(talk); widgetActions.Controls.SetChildIndex(talk,0);
+                widgetStatus.Controls.Add(dictStatus);
+                root.Visible=false;
+                compact.Visible=true;
+                int width=(int)Math.Ceiling(275*scale);
+                ClientSize=new Size(width,(int)Math.Ceiling(100*scale));
+                MinimumSize=Size;
+                dictStatus.MaximumSize=new Size(width-compact.Padding.Horizontal-10,0);
+                Text="VoiceKey · Dictation";
+            } else {
+                compact.Visible=false;
+                WindowState=FormWindowState.Normal;
+                dictationActions.Controls.Add(talk); dictationActions.Controls.SetChildIndex(talk,1);
+                fullStatus.Controls.Add(dictStatus); dictStatus.MaximumSize=Size.Empty;
+                root.Visible=true;
+                MinimumSize=new Size((int)(470*scale),(int)(500*scale)); Size=fullSize;
+                Text="VoiceKey";
+            }
+            widgetMode=compactMode;
+            ResumeLayout(true);
+            if(IsHandleCreated) {
+                var bounds=Screen.FromControl(this).WorkingArea;
+                Location=new Point(Math.Max(bounds.Left,Math.Min(Left,bounds.Right-Width)),Math.Max(bounds.Top,Math.Min(Top,bounds.Bottom-Height)));
+            }
+            if(!compactMode && fullMaximized) WindowState=FormWindowState.Maximized;
+        }
         void LoadSettings() {
             try {
                 if(!File.Exists(prefs)) return;
@@ -93,7 +145,8 @@ namespace VoiceKey {
                         case "model": for(int j=0;j<Model.Choices.Length;j++) if(Model.Choices[j].Id==v) model.SelectedIndex=j; break;
                         case "mic": for(int j=0;j<mic.Items.Count;j++) if(mic.Items[j].ToString()==v) mic.SelectedIndex=j; break;
                         case "format": Select(format,v); break; case "language": Select(language,v); break;
-                        case "key": Select(hotkey,v); break; case "paste": paste.Checked=v=="1"; break;
+                        case "key": binding=ShortcutBinding.Parse(v); break; case "paste": paste.Checked=v=="1"; break;
+                        case "widget": SetWidgetMode(v=="1"); break;
                     }
                 }
             } catch(IOException) {}
@@ -101,19 +154,38 @@ namespace VoiceKey {
         static void Select(ComboBox cb,string v) { int n; if(int.TryParse(v,out n)&&n>=0&&n<cb.Items.Count) cb.SelectedIndex=n; }
         void SettingsChanged(object sender,EventArgs e) { if(!loading) SaveSettings(); }
         void SaveSettings() {
-            try { File.WriteAllLines(prefs,new[]{"model="+Selected.Id,"mic="+mic.SelectedItem,"format="+format.SelectedIndex,"language="+language.SelectedIndex,"key="+hotkey.SelectedIndex,"paste="+(paste.Checked?"1":"0")}); }
+            try { File.WriteAllLines(prefs,new[]{"model="+Selected.Id,"mic="+mic.SelectedItem,"format="+format.SelectedIndex,"language="+language.SelectedIndex,"key="+binding.Serialize(),"paste="+(paste.Checked?"1":"0"),"widget="+(widgetMode?"1":"0")}); }
             catch(IOException) {} catch(UnauthorizedAccessException) {}
         }
         void Error(string text) { MessageBox.Show(this,text,"VoiceKey",MessageBoxButtons.OK,MessageBoxIcon.Information); }
         void Launch(string path) { try { Process.Start(new ProcessStartInfo(path) { UseShellExecute=true }); } catch(Exception ex) { Error(ex.Message); } }
-        void SetHotkey() {
-            if(registered) Desktop.UnregisterHotKey(Handle,1);
-            vk=0x77+hotkey.SelectedIndex; registered=hotkey.SelectedIndex<3 && Desktop.RegisterHotKey(Handle,1,0x4000,(uint)vk);
-            keyHint.Text=registered?"Click a text box, then hold "+hotkey.Text+" to speak. Release to transcribe." :
-                (hotkey.SelectedIndex==3?"Use Hold to dictate to copy your words.":hotkey.Text+" is in use. Choose another hold key or use the button.");
+        void ChooseShortcut() {
+            if(shortcut!=null) { shortcut.Dispose(); shortcut=null; }
+            var previous=binding;
+            using(var dialog=ShortcutCaptureDialog.Create(this,binding)) {
+                if(dialog.ShowDialog(this)==DialogResult.OK) binding=dialog.Binding;
+            }
+            string error=SetHotkey();
+            if(error!=null && binding.Serialize()!=previous.Serialize()) {
+                binding=previous; SetHotkey(); Error(error);
+            }
+            SaveSettings();
+        }
+        string SetHotkey() {
+            if(shortcut!=null) shortcut.Dispose();
+            shortcut=new ShortcutController(Handle,binding);
+            shortcut.Pressed+=delegate(object sender,ShortcutTargetEventArgs e) { StartCapture(true,true,e.Target); };
+            shortcut.Released+=delegate { if(held && keyboard) FinishCapture(); };
+            bindingName.Text=binding.Display;
+            string error;
+            bool registered=shortcut.TryRegister(out error);
+            keyHint.Text=!registered?error:binding.IsOff?"Use Hold to dictate with the mouse.":
+                "Click a text field, then hold "+binding.Display+" or the dictation button to speak.";
+            RefreshControls();
+            return registered?null:error;
         }
         protected override void WndProc(ref Message m) {
-            if(m.Msg==0x312 && m.WParam.ToInt32()==1 && registered) { if(Desktop.Down(vk)) StartCapture(true,true); return; }
+            if(shortcut!=null && shortcut.Dispatch(ref m)) return;
             base.WndProc(ref m);
         }
         void UpdateModel() {
@@ -125,7 +197,9 @@ namespace VoiceKey {
             bool recording=capture!=null, busy=operation!=null, ready=Whisper.Ready(Selected);
             record.Enabled=!held && (!busy||downloading); record.Text=recording&&!held?"Stop and save":"Record WAV";
             mic.Enabled=format.Enabled=!recording; listen.Enabled=!recording && File.Exists(lastTake);
-            model.Enabled=language.Enabled=hotkey.Enabled=!recording&&!busy;
+            model.Enabled=language.Enabled=setKey.Enabled=!recording&&!busy;
+            widget.Enabled=full.Enabled=!recording;
+            if(shortcut!=null) shortcut.CanStart=!closeRequested&&!recording&&!busy&&ready;
             talk.Enabled=(held&&!keyboard)||(!recording&&!busy&&ready);
             get.Text=busy?(downloading?"Cancel download":"Cancel transcription"):(ready?"Model downloaded":"Download model");
             get.Enabled=busy||(!recording&&!ready); again.Enabled=!recording&&!busy&&ready&&File.Exists(latest);
@@ -141,7 +215,7 @@ namespace VoiceKey {
             catch(Exception ex) { dictStatus.Text="Download failed. Choose Download model to retry."; if(!closeRequested) Error(ex.Message); }
             finally { operation=null; downloading=false; op.Dispose(); RefreshControls(); if(closeRequested) Close(); }
         }
-        void StartCapture(bool dictation,bool fromKey) {
+        void StartCapture(bool dictation,bool fromKey,Desktop.Target destination) {
             if(capture!=null || closeRequested || (operation!=null && (dictation||!downloading))) return;
             if(dictation&&!Whisper.Ready(Selected)) { dictStatus.Text="Choose Download model first."; return; }
             string path;
@@ -150,8 +224,8 @@ namespace VoiceKey {
                 else {
                     Directory.CreateDirectory(takes); path=Path.Combine(takes,"Vocal "+DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss-fff")+".wav");
                 }
-                target=fromKey?Desktop.CurrentTarget():new Desktop.Target();
-                eligible=fromKey && target.Window!=Handle && target.Focus!=IntPtr.Zero;
+                target=destination;
+                eligible=dictation && target.Window!=Handle && target.Matches(Desktop.CurrentTarget());
                 int bits=dictation?16:(format.SelectedIndex==0?24:16);
                 capture=new Capture(path,((Mic)mic.SelectedItem).Id,dictation?16000:48000,bits);
                 held=dictation; keyboard=fromKey; clock.Restart();
@@ -168,9 +242,10 @@ namespace VoiceKey {
             }
         }
         void Tick() {
+            if(shortcut!=null) shortcut.Tick();
             if(eligible && !target.Matches(Desktop.CurrentTarget())) eligible=false;
             if(capture==null) return;
-            if(capture.Failure!=null || (held && !Desktop.Down(keyboard?vk:1))) { FinishCapture(); return; }
+            if(capture.Failure!=null || (held && !keyboard && !Desktop.Down(1))) { FinishCapture(); return; }
             double db=20*Math.Log10(Math.Max(0.0001,capture.Peak)); meter.Value=(int)Math.Max(0,Math.Min(60,60+db));
             string level=db<=-75?"silence":db.ToString("0")+" dBFS";
             string info=clock.Elapsed.ToString(@"hh\:mm\:ss")+"  ·  "+level+(capture.Clipped?"  ·  CLIP":"");
@@ -209,6 +284,10 @@ namespace VoiceKey {
                 if(closeRequested) return;
                 if(string.IsNullOrWhiteSpace(text)) { dictStatus.Text="No words detected. The last dictation is available to retry."; return; }
                 transcript.Text=text;
+                // With a combination shortcut, the dictation key can come up before Ctrl or Shift.
+                for(int i=0;i<30 && paste.Checked && eligible && Desktop.PasteModifierDown();i++)
+                    await Task.Delay(40,op.Token);
+                if(closeRequested) return;
                 if(CopyText()) {
                     if(paste.Checked && eligible && Desktop.Paste(target)) dictStatus.Text="Paste sent. Transcript also copied.";
                     else dictStatus.Text="Transcript copied. Paste it anywhere with Ctrl+V.";
@@ -221,7 +300,7 @@ namespace VoiceKey {
             closeRequested=true; eligible=false;
             if(capture!=null) FinishCapture();
             if(operation!=null) { e.Cancel=true; operation.Cancel(); return; }
-            tick.Stop(); if(registered) Desktop.UnregisterHotKey(Handle,1);
+            tick.Stop(); if(shortcut!=null) { shortcut.Dispose(); shortcut=null; }
         }
     }
 
